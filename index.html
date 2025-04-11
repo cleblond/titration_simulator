@@ -78,8 +78,8 @@
             <div class="control-group">
                 <label for="acidType">Acid Type:</label>
                 <select id="acidType">
-                    <option value="1">Monoprotic</option>
-                    <option value="2" selected>Diprotic</option>
+                    <option value="1" selected>Monoprotic</option>
+                    <option value="2">Diprotic</option>
                     <option value="3">Triprotic</option>
                 </select>
                 
@@ -129,6 +129,8 @@
         const acidConcInput = document.getElementById('acidConc');
         const acidVolumeInput = document.getElementById('acidVolume');
         const baseConcInput = document.getElementById('baseConc');
+        
+        let pHzeroBase = 0;
 
         // Chart variables
         let titrationChart = null;
@@ -516,6 +518,8 @@
         // or an empty/default array for fractions if calculation fails).
 
         // Make sure calculatePH is robust:
+        
+         let previous_pH = 0;
          function calculatePH(acidType, pKas, molesAcid, molesBase, totalVolume_mL) {
             
             console.log("acidType=", acidType)
@@ -538,6 +542,7 @@
              try { // Wrap complex calculations
                  if (molesAcid <= 0) {
                      // No acid present
+                     console.log("No Acid Present");
                      
                      if (molesBase > 0) {
                          const OH = molesBase / totalVolume_L;
@@ -548,9 +553,10 @@
                      fractions[acidType] = 1; // Fully deprotonated (or just water)
                  }
                  else if (molesBase <= 0) {
+                 
                      // Only acid present (initial point)
                      // Simplified: Use first dissociation (needs improvement for accuracy)
-                     
+                     console.log("No Base Present");
                      
                       if (Ka.length > 0 && Ka[0] > 0) {
                           const Ca_eff = molesAcid / totalVolume_L;
@@ -561,16 +567,27 @@
                            pH = 7.0; // Should not happen if pKa is valid
                       }
                       fractions[0] = 1; // Fully protonated form dominates
+                      
+                      pHzeroBase = pH;
+                      
 
                  }
                  else if (molesBase >= molesAcid * acidType) {
                      // Excess base
+                     console.log("Excess Base");
+                     
                      const excessMolesOH = molesBase - molesAcid * acidType;
                      const excessOH_conc = excessMolesOH / totalVolume_L;
+                     console.log("excessOH_conc=", excessOH_conc, 10^(-molesAcid));
                      pH = 14 + Math.log10(Math.max(excessOH_conc, 1e-14)); // Use max to avoid log(0)
+                     
+                     if (pH == 0) pH = (previous_pH + 10^(-molesAcid))/2;
+                     
                      fractions[acidType] = 1; // Fully deprotonated form dominates
                  }
                  else {
+                 
+                     console.log("Buffer Region");
                      // --- Buffer region / Equivalence Points ---
                      // THIS IS THE HARDEST PART FOR ACCURACY.
                      // The provided Henderson-Hasselbalch approach is a simplification.
@@ -609,6 +626,7 @@
                                 if (Kb_last > 0 && C_salt_eff > 0) {
                                     const OH_hydrolysis = Math.sqrt(Kb_last * C_salt_eff); // Approximation
                                     pH = 14 + Math.log10(Math.max(OH_hydrolysis, 1e-14));
+                                    
                                 } else {
                                     pH = 7.0; // Fallback if Kb is zero etc.
                                 }
@@ -617,6 +635,15 @@
                                 pH = pKa_current;
                            }
                      }
+                     
+                     
+                     
+                     //fudge factor to handle low pH                     
+                     if (pH < pHzeroBase) {
+                     pH = pHzeroBase;
+                     
+                     }
+                     
 
                      // --- Calculate species fractions based on the calculated pH ---
                      // This makes the species chart consistent with the calculated pH point
@@ -654,7 +681,7 @@
                   pH = NaN; // Indicate error state
                   fractions = [];
              }
-
+             previous_pH = pH;
              return { pH, fractions };
          }
 
