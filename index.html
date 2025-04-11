@@ -365,7 +365,7 @@
                 return;
             }
             
-            console.log(speciesChart.data.datasets);
+            //console.log(speciesChart.data.datasets);
             
 
             const baseVolume = parseFloat(baseVolumeSlider.value) || 0;
@@ -517,6 +517,11 @@
 
         // Make sure calculatePH is robust:
          function calculatePH(acidType, pKas, molesAcid, molesBase, totalVolume_mL) {
+            
+            console.log("acidType=", acidType)
+            console.log(molesAcid, molesBase);
+            console.log(totalVolume_mL);
+            
             let pH = 7; // Default pH
             let fractions = new Array(acidType + 1).fill(0); // Default fractions
              const totalVolume_L = totalVolume_mL / 1000; // Convert to Liters
@@ -527,8 +532,8 @@
              const Kw = 1e-14;
              const Ka = pKas.map(pKa => Math.pow(10, -pKa)); // Calculate Ka values
 
-	     console.log(molesBase);
-	     console.log(molesAcid);
+	     //console.log(molesBase);
+	     //console.log(molesAcid);
 
              try { // Wrap complex calculations
                  if (molesAcid <= 0) {
