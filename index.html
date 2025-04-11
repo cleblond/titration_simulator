@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acid Titration Simulator</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .control-panel {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .slider-container {
+            margin: 30px 0;
+        }
+        .slider {
+            width: 100%;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-bottom: 40px;
+        }
+        .bar-container {
+            position: relative;
+            height: 200px;
+        }
+        .current-value {
+            text-align: center;
+            font-size: 1.2em;
+            margin: 10px 0;
+        }
+        .pKa-inputs {
+            display: flex;
+            gap: 10px;
+        }
+        .pKa-inputs input {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Acid Titration Simulator</h1>
+        
+        <div class="control-panel">
+            <div class="control-group">
+                <label for="acidType">Acid Type:</label>
+                <select id="acidType">
+                    <option value="1">Monoprotic</option>
+                    <option value="2" selected>Diprotic</option>
+                    <option value="3">Triprotic</option>
+                </select>
+                
+                <label>pKa Values:</label>
+                <div class="pKa-inputs" id="pKaContainer">
+                    <input type="number" id="pKa1" placeholder="pKa1" value="1.27" step="0.01">
+                    <input type="number" id="pKa2" placeholder="pKa2" value="4.27" step="0.01">
+                </div>
+                
+                <label for="acidConc">Acid Concentration (M):</label>
+                <input type="number" id="acidConc" value="0.1" step="0.01" min="0.01">
+                
+                <label for="acidVolume">Acid Volume (mL):</label>
+                <input type="number" id="acidVolume" value="50" step="1" min="1">
+                
+                <label for="baseConc">Base Concentration (M):</label>
+                <input type="number" id="baseConc" value="0.1" step="0.01" min="0.01">
+            </div>
+        </div>
+        
+        <div class="slider-container">
+            <label for="baseVolume">NaOH Volume (mL): <span id="currentVolume">0</span></label>
+            <input type="range" class="slider" id="baseVolume" min="0" max="100" value="0" step="0.1">
+        </div>
+        
+        <div class="current-value">
+            Current pH: <span id="currentPH">-</span>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="titrationCurve"></canvas>
+        </div>
+        
+        <div class="bar-container">
+            <canvas id="speciesDistribution"></canvas>
+        </div>
+    </div>
+
+<script>
+        // DOM elements
+        const acidTypeSelect = document.getElementById('acidType');
+        const pKaContainer = document.getElementById('pKaContainer');
+        const baseVolumeSlider = document.getElementById('baseVolume');
+        const currentVolumeSpan = document.getElementById('currentVolume');
+        const currentPHSpan = document.getElementById('currentPH');
+        // Add references to input fields needed in updateCurrentPoint
+        const acidConcInput = document.getElementById('acidConc');
+        const acidVolumeInput = document.getElementById('acidVolume');
+        const baseConcInput = document.getElementById('baseConc');
+
+        // Chart variables
+        let titrationChart = null;
+        let speciesChart = null;
+        // Removed fullTitrationData - we calculate points as needed for the curve now
+        // let fullTitrationData = null;
+
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEventListeners();
+            updatePKaInputs(); // This calls updateSimulation initially
+            // initializeCharts() is called within updateSimulation if needed
+
+            // updateSimulation() is called by updatePKaInputs
+        });
+
+        function setupEventListeners() {
+            acidTypeSelect.addEventListener('change', updatePKaInputs);
+            baseVolumeSlider.addEventListener('input', function() {
+                // Update display immediately for responsiveness
+                currentVolumeSpan.textContent = parseFloat(this.value).toFixed(1);
+                updateCurrentPoint(); // Calculate and update charts
+            });
+
+            // Add listeners to all input fields that affect the full curve
+            document.querySelectorAll('#acidConc, #acidVolume, #baseConc').forEach(input => {
+                input.addEventListener('change', updateSimulation);
+            });
+            // pKa inputs have listeners added dynamically in updatePKaInputs
+        }
+
+        function updatePKaInputs() {
+            const acidType = parseInt(acidTypeSelect.value);
+            pKaContainer.innerHTML = ''; // Clear previous inputs
+
+            const defaultPKas = {
+                1: ["4.75"], // Acetic acid
+                2: ["1.27", "4.27"], // Oxalic acid
+                3: ["2.15", "7.20", "12.35"] // Phosphoric acid
+            };
+
+            for (let i = 1; i <= acidType; i++) {
+                const input = document.createElement('input');
+                input.type = "number";
+                input.id = `pKa${i}`;
+                input.placeholder = `pKa${i}`;
+                input.step = "0.01";
+                // Use defaults if available
+                if (defaultPKas[acidType] && defaultPKas[acidType][i - 1]) {
+                    input.value = defaultPKas[acidType][i - 1];
+                }
+                pKaContainer.appendChild(input);
+                // Add listener specifically for pKa changes
+                input.addEventListener('change', updateSimulation);
+            }
+
+            // Update the simulation after changing acid type/pKa fields
+            updateSimulation();
+        }
+
+        function initializeCharts() {
+            // Destroy existing charts if they exist
+            if (titrationChart) {
+                titrationChart.destroy();
+            }
+            if (speciesChart) {
+                speciesChart.destroy();
+            }
+
+            const ctx1 = document.getElementById('titrationCurve').getContext('2d');
+            const ctx2 = document.getElementById('speciesDistribution').getContext('2d');
+
+            // Titration curve chart
+            titrationChart = new Chart(ctx1, {
+                type: 'line', // or 'scatter' if you prefer points not connected initially
+                data: {
+                    // labels: [], // Not needed when using {x,y} data format
+                    datasets: [{
+                        label: 'Titration Curve',
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        borderWidth: 2,
+                        fill: false, // Looks cleaner for titration curves
+                        pointRadius: 0, // Hide points on the main curve
+                        tension: 0.1, // Slightly curve the line
+                        data: [] // Populated as {x, y} objects
+                    }, {
+                        label: 'Current Point',
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgb(255, 99, 132)',
+                        // borderWidth: 2, // Not needed for a single point
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        showLine: false, // Ensure only the point is shown
+                        data: [] // Single {x, y} object
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear', // Ensure x-axis is treated numerically
+                            position: 'bottom',
+                            title: {
+                                display: true,
+                                text: 'Volume of NaOH (mL)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'pH'
+                            },
+                            min: 0,
+                            max: 14
+                        }
+                    },
+                     animation: {
+                         duration: 0 // Disable animation for faster updates if needed
+                    }
+                }
+            });
+
+            // Species distribution chart
+            speciesChart = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Species Distribution', // This label won't show if legend is false
+                        backgroundColor: ['rgba(255, 99, 132, 0.7)', 'rgba(54, 162, 235, 0.7)', 'rgba(255, 206, 86, 0.7)', 'rgba(75, 192, 192, 0.7)'],
+                        borderColor: ['rgba(255, 99, 132, 1)', 'rgba(54, 162, 235, 1)', 'rgba(255, 206, 86, 1)', 'rgba(75, 192, 192, 1)'],
+                        borderWidth: 1,
+                        data: []
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'x', // Use 'x' for vertical bars, 'y' for horizontal
+                    scales: {
+                        x: { // Species labels will be on x-axis
+                            title: {
+                                display: true,
+                                text: 'Species'
+                             }
+                        },
+                        y: { // Fraction will be on y-axis
+                            beginAtZero: true,
+                            max: 1,
+                            title: {
+                                display: true,
+                                text: 'Fraction'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false // Hides the legend ('Species Distribution')
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateSimulation() {
+            // Initialize charts if they haven't been created yet
+            if (!titrationChart || !speciesChart) {
+                initializeCharts();
+            }
+
+            // Get current parameters
+            const acidType = parseInt(acidTypeSelect.value);
+            const pKas = [];
+            let validPKas = true;
+            for (let i = 1; i <= acidType; i++) {
+                const pKaInput = document.getElementById(`pKa${i}`);
+                if (pKaInput) {
+                     const pKaVal = parseFloat(pKaInput.value);
+                     if (isNaN(pKaVal)) {
+                         validPKas = false;
+                         break;
+                     }
+                     pKas.push(pKaVal);
+                } else {
+                    validPKas = false; // Should not happen if updatePKaInputs worked
+                    break;
+                }
+            }
+
+            const acidConc = parseFloat(acidConcInput.value);
+            const acidVolume = parseFloat(acidVolumeInput.value);
+            const baseConc = parseFloat(baseConcInput.value);
+
+            // Validate parameters before proceeding
+            if (!validPKas || isNaN(acidConc) || isNaN(acidVolume) || isNaN(baseConc) ||
+                acidConc <= 0 || acidVolume <= 0 || baseConc <= 0) {
+                 console.error("Invalid input parameters for simulation.");
+                 // Optionally clear charts or show an error message
+                 titrationChart.data.datasets[0].data = [];
+                 titrationChart.data.datasets[1].data = [];
+                 speciesChart.data.labels = [];
+                 speciesChart.data.datasets[0].data = [];
+                 titrationChart.update();
+                 speciesChart.update();
+                 currentPHSpan.textContent = "Error";
+                 return;
+            }
+
+            // Calculate the full titration curve points
+            const curveData = calculateFullTitrationCurve(acidType, pKas, acidConc, acidVolume, baseConc);
+
+            // Update the maximum slider value based on the titration curve
+             // Ensure volumes array is not empty before finding max
+            const maxVolume = curveData.volumes.length > 0 ? Math.max(...curveData.volumes) : 100;
+            baseVolumeSlider.max = Math.ceil(maxVolume); // Use Math.ceil for safety
+
+            // Update the main curve dataset (dataset 0)
+            titrationChart.data.datasets[0].data = curveData.dataPoints;
+            // titrationChart.data.labels = curveData.volumes; // Remove this line
+
+            // Update the chart (will draw the new blue line)
+            titrationChart.update();
+
+            // Update the current point display based on the *current* slider value
+            updateCurrentPoint();
+        }
+
+        function updateCurrentPoint() {
+            // Ensure charts exist
+            if (!titrationChart || !speciesChart) {
+                console.warn("Charts not initialized, cannot update point.");
+                return;
+            }
+            
+            console.log(speciesChart.data.datasets);
+            
+
+            const baseVolume = parseFloat(baseVolumeSlider.value) || 0;
+            // Update volume display immediately
+            currentVolumeSpan.textContent = baseVolume.toFixed(1);
+
+            // --- Get parameters needed for calculation ---
+            const acidType = parseInt(acidTypeSelect.value);
+            const pKas = [];
+            let validPKas = true;
+            for (let i = 1; i <= acidType; i++) {
+                const pKaInput = document.getElementById(`pKa${i}`);
+                if (pKaInput) {
+                    const pKaVal = parseFloat(pKaInput.value);
+                    if (isNaN(pKaVal)) {
+                        validPKas = false;
+                        break;
+                    }
+                     pKas.push(pKaVal);
+                } else { validPKas = false; break; }
+            }
+            const acidConc = parseFloat(acidConcInput.value);
+            const acidVolume = parseFloat(acidVolumeInput.value);
+            const baseConc = parseFloat(baseConcInput.value);
+
+            // --- Validate parameters ---
+            if (!validPKas || isNaN(acidConc) || isNaN(acidVolume) || isNaN(baseConc) ||
+                acidConc <= 0 || acidVolume <= 0 || baseConc <= 0) {
+                currentPHSpan.textContent = "Invalid Params";
+                titrationChart.data.datasets[1].data = []; // Clear point
+                speciesChart.data.labels = [];
+                speciesChart.data.datasets[0].data = [];
+                titrationChart.update('none');
+                speciesChart.update();
+                return;
+            }
+
+            // --- Recalculate pH and species for the EXACT slider volume ---
+            const molesAcid = acidConc * acidVolume / 1000;
+            const molesBase = baseConc * baseVolume / 1000;
+            const totalVolume = acidVolume + baseVolume; // in mL
+
+            // Ensure totalVolume is positive before calling calculatePH
+             if (totalVolume <= 0) {
+                 console.error("Total volume is not positive.");
+                 currentPHSpan.textContent = "Vol Error";
+                 return;
+             }
+
+            const { pH: currentpH, fractions: currentSpecies } = calculatePH(acidType, pKas, molesAcid, molesBase, totalVolume);
+
+            // --- Update Displays and Charts ---
+            if (isNaN(currentpH) || !isFinite(currentpH)) {
+                currentPHSpan.textContent = "Calc Error";
+                titrationChart.data.datasets[1].data = []; // Clear point
+                speciesChart.data.labels = [];
+                speciesChart.data.datasets[0].data = [];
+            } else {
+                currentPHSpan.textContent = currentpH.toFixed(2);
+
+                // Update the current point dataset (dataset 1)
+                titrationChart.data.datasets[1].data = [{
+                    x: baseVolume, // Use the exact slider value for X
+                    y: currentpH   // Use the re-calculated pH for Y
+                }];
+
+                // Update species distribution chart
+                const labels = [];
+                const data = [];
+                // Ensure currentSpecies is a valid array of the correct length
+                 if (Array.isArray(currentSpecies) && currentSpecies.length === acidType + 1 && currentSpecies.every(f => isFinite(f))) {
+                     for (let i = 0; i <= acidType; i++) {
+                         labels.push(getSpeciesLabel(acidType, i));
+                         data.push(currentSpecies[i] || 0); // Use 0 if somehow null/undefined
+                     }
+                    speciesChart.data.labels = labels;
+                    speciesChart.data.datasets[0].data = data;
+                } else {
+                     // Clear species chart if fractions are invalid
+                     speciesChart.data.labels = [];
+                     speciesChart.data.datasets[0].data = [];
+                    console.warn("Invalid species fractions received from calculatePH:", currentSpecies);
+                }
+            }
+
+            // Update charts - use 'none' for titration point update for smoothness
+            titrationChart.update('none');
+            speciesChart.update();
+        }
+
+
+        function calculateFullTitrationCurve(acidType, pKas, acidConc, acidVolume, baseConc) {
+            const volumes = [];
+            const dataPoints = []; // Store {x, y} points for the chart
+            // const species = []; // We don't need to store all species data for the whole curve
+
+            // Calculate equivalence point volumes to determine range
+            const equivVolumes = [];
+            for (let i = 1; i <= acidType; i++) {
+                 // Ensure baseConc is positive to avoid division by zero
+                if (baseConc > 0) {
+                     equivVolumes.push((i * acidConc * acidVolume) / baseConc);
+                } else {
+                     equivVolumes.push(100); // Default if baseConc is invalid
+                 }
+            }
+
+            // Generate points for the curve
+            // Ensure equivVolumes has values before finding max
+            const finalEquivVol = equivVolumes.length > 0 ? Math.max(...equivVolumes) : 100;
+            // Ensure finalEquivVol is finite and positive
+            const safeFinalEquivVol = isFinite(finalEquivVol) && finalEquivVol > 0 ? finalEquivVol : 100;
+            const maxVolume = safeFinalEquivVol * 1.5; // Go 50% past last EP
+            const steps = 200; // Number of points
+            const step = maxVolume / steps;
+
+            const initialMolesAcid = acidConc * acidVolume / 1000;
+
+            for (let i = 0; i <= steps; i++) {
+                const v = i * step;
+                volumes.push(v);
+
+                const molesBase = baseConc * v / 1000;
+                const totalVolume = acidVolume + v;
+
+                 if (totalVolume <= 0) continue; // Skip if volume is invalid
+
+                // Calculate pH - reuse the detailed calculation function
+                const { pH } = calculatePH(acidType, pKas, initialMolesAcid, molesBase, totalVolume);
+
+                // Add valid points to the dataPoints array
+                if (isFinite(pH)) {
+                    dataPoints.push({ x: v, y: pH });
+                }
+            }
+            // Return both volumes (for slider max) and dataPoints (for chart)
+            
+            console.log(dataPoints);
+            
+            return { volumes, dataPoints };
+        }
+
+
+        // --- CALCULATION FUNCTIONS (calculatePH, calculateHStrongAcid, getSpeciesLabel) ---
+        // Keep these functions as they were in your provided code,
+        // but ensure calculatePH returns an object like { pH: number, fractions: array }
+        // and handles potential errors gracefully (e.g., returning NaN for pH
+        // or an empty/default array for fractions if calculation fails).
+
+        // Make sure calculatePH is robust:
+         function calculatePH(acidType, pKas, molesAcid, molesBase, totalVolume_mL) {
+            let pH = 7; // Default pH
+            let fractions = new Array(acidType + 1).fill(0); // Default fractions
+             const totalVolume_L = totalVolume_mL / 1000; // Convert to Liters
+
+             // Avoid division by zero / log errors
+             if (totalVolume_L <= 0) return { pH: NaN, fractions: [] };
+
+             const Kw = 1e-14;
+             const Ka = pKas.map(pKa => Math.pow(10, -pKa)); // Calculate Ka values
+
+	     console.log(molesBase);
+	     console.log(molesAcid);
+
+             try { // Wrap complex calculations
+                 if (molesAcid <= 0) {
+                     // No acid present
+                     
+                     if (molesBase > 0) {
+                         const OH = molesBase / totalVolume_L;
+                         pH = 14 + Math.log10(Math.max(OH, 1e-14)); // Use max to avoid log(0)
+                     } else {
+                         pH = 7.0; // Neutral if no acid and no base
+                     }
+                     fractions[acidType] = 1; // Fully deprotonated (or just water)
+                 }
+                 else if (molesBase <= 0) {
+                     // Only acid present (initial point)
+                     // Simplified: Use first dissociation (needs improvement for accuracy)
+                     
+                     
+                      if (Ka.length > 0 && Ka[0] > 0) {
+                          const Ca_eff = molesAcid / totalVolume_L;
+                          // Quadratic: H^2 + Ka1*H - Ka1*Ca_eff = 0
+                          const H = (-Ka[0] + Math.sqrt(Ka[0]*Ka[0] + 4*Ka[0]*Ca_eff)) / 2;
+                          pH = -Math.log10(Math.max(H, 1e-14));
+                      } else {
+                           pH = 7.0; // Should not happen if pKa is valid
+                      }
+                      fractions[0] = 1; // Fully protonated form dominates
+
+                 }
+                 else if (molesBase >= molesAcid * acidType) {
+                     // Excess base
+                     const excessMolesOH = molesBase - molesAcid * acidType;
+                     const excessOH_conc = excessMolesOH / totalVolume_L;
+                     pH = 14 + Math.log10(Math.max(excessOH_conc, 1e-14)); // Use max to avoid log(0)
+                     fractions[acidType] = 1; // Fully deprotonated form dominates
+                 }
+                 else {
+                     // --- Buffer region / Equivalence Points ---
+                     // THIS IS THE HARDEST PART FOR ACCURACY.
+                     // The provided Henderson-Hasselbalch approach is a simplification.
+                     // A more robust method uses alpha fractions based on pH guess,
+                     // or solves charge/mass balance equations (complex).
+                     // Let's try alpha fractions method (requires iteration or root finding ideally)
+
+                     // --- Simplified Henderson-Hasselbalch (as potentially in original code) ---
+                     // Determine which buffer region we are in based on molesBase/molesAcid ratio
+                      const ratio_base_acid = molesBase / molesAcid;
+                      let buffer_stage = Math.floor(ratio_base_acid); // 0 means HnA/H(n-1)A-, 1 means H(n-1)A-/H(n-2)A- etc.
+
+                     if (buffer_stage >= acidType) buffer_stage = acidType - 1; // Cap at last buffer
+
+                     const pKa_current = pKas[buffer_stage];
+
+                      // Moles of conjugate base formed within this stage
+                      const moles_conj_base_stage = molesBase - (buffer_stage * molesAcid);
+                      // Moles of acid remaining within this stage
+                      const moles_acid_stage = molesAcid - moles_conj_base_stage;
+
+                     // Avoid division by zero or log of zero/negative in H-H
+                     if (moles_acid_stage > 1e-12 && moles_conj_base_stage > 1e-12) {
+                           const hh_ratio = moles_conj_base_stage / moles_acid_stage;
+                           pH = pKa_current + Math.log10(hh_ratio);
+                     } else {
+                           // Very close to an equivalence point - H-H is inaccurate
+                           // Estimate EP pH (simplistic midpoint for intermediate EPs)
+                           if (buffer_stage < acidType - 1 && (moles_conj_base_stage < 1e-9 || moles_acid_stage < 1e-9) ) {
+                               // Intermediate EP estimate
+                               pH = (pKas[buffer_stage] + pKas[buffer_stage + 1]) / 2;
+                           } else if (buffer_stage === acidType - 1 && (moles_conj_base_stage < 1e-9 || moles_acid_stage < 1e-9)) {
+                               // Final EP - Hydrolysis of A^n-
+                                const Kb_last = Kw / Ka[acidType - 1];
+                                const C_salt_eff = molesAcid / totalVolume_L; // Conc of A^n- salt
+                                if (Kb_last > 0 && C_salt_eff > 0) {
+                                    const OH_hydrolysis = Math.sqrt(Kb_last * C_salt_eff); // Approximation
+                                    pH = 14 + Math.log10(Math.max(OH_hydrolysis, 1e-14));
+                                } else {
+                                    pH = 7.0; // Fallback if Kb is zero etc.
+                                }
+                           } else {
+                                // If H-H fails but not near EP, use pKa as rough estimate
+                                pH = pKa_current;
+                           }
+                     }
+
+                     // --- Calculate species fractions based on the calculated pH ---
+                     // This makes the species chart consistent with the calculated pH point
+                     const H_conc = Math.pow(10, -pH);
+                     let denom = Math.pow(H_conc, acidType);
+                     let terms = [denom]; // Term for HnA
+
+                     for (let i = 0; i < acidType; i++) {
+                        let term = terms[i] * Ka[i] / H_conc;
+                        terms.push(term);
+                        denom += term;
+                     }
+
+                     if (denom > 0 && isFinite(denom)) {
+                        fractions = terms.map(term => term / denom);
+                         // Ensure fractions sum to 1 (correct for rounding errors)
+                        const sumFractions = fractions.reduce((a, b) => a + b, 0);
+                        if (sumFractions > 0) {
+                             fractions = fractions.map(f => f / sumFractions);
+                        } else {
+                             fractions = new Array(acidType + 1).fill(0); // Error case
+                        }
+                     } else {
+                          fractions = new Array(acidType + 1).fill(0); // Denominator error
+                           console.warn("Species fraction denominator error at pH", pH);
+                     }
+                 } // End buffer region else
+
+                 // Final Clamp and validation
+                 if (!isFinite(pH)) pH = 7.0; // Fallback pH if calculation fails
+                 pH = Math.max(0, Math.min(14, pH)); // Clamp to 0-14
+
+             } catch (error) {
+                  console.error("Error during pH calculation:", error);
+                  pH = NaN; // Indicate error state
+                  fractions = [];
+             }
+
+             return { pH, fractions };
+         }
+
+
+        // Removed calculateHStrongAcid as initial pH is handled in calculatePH now
+
+        function getSpeciesLabel(acidType, speciesIndex) {
+            // speciesIndex: 0=HnA, 1=H(n-1)A-, ... n=A^n-
+             const H_count = acidType - speciesIndex;
+             const charge = speciesIndex === 0 ? '' : `${speciesIndex}-`; // Simplified charge notation
+
+             if (H_count > 1) return `H<sub>${H_count}</sub>A<sup>${charge}</sup>`;
+             if (H_count === 1) return `HA<sup>${charge}</sup>`;
+             return `A<sup>${charge}</sup>`; // Fully deprotonated
+        }
+
+    </script>
+</body>
+</html>
